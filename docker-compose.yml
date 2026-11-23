@@ -1,0 +1,67 @@
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-risk_system_vkr}
+      POSTGRES_USER: ${POSTGRES_USER:-risk_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run python -B backend/init_env.py first}
+    volumes:
+      - pgdata_vkr:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-risk_app}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-risk_system_vkr}
+      SECRET_KEY: ${SECRET_KEY:?Run python -B backend/init_env.py first}
+      APP_TIMEZONE: ${APP_TIMEZONE:-Europe/Moscow}
+      SEED_DEMO: ${SEED_DEMO:-true}
+      SCHEDULER_ENABLED: ${SCHEDULER_ENABLED:-true}
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - access_logs:/app/logs
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 120s
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:80"
+  backup:
+    image: postgres:16
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      PGUSER: ${POSTGRES_USER:-risk_app}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB:-risk_system_vkr}
+      BACKUP_KEEP: ${BACKUP_KEEP:-14}
+    volumes:
+      - database_backups:/backups
+      - ./backend/backup.sh:/backup.sh:ro
+    entrypoint: ["sh", "/backup.sh"]
+volumes:
+  pgdata_vkr:
+  access_logs:
+  database_backups:
